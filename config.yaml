@@ -1,0 +1,46 @@
+settings:
+  check_last_n_episodes: 2             # Number of recent episodes to check per feed
+  max_episode_age_days: 3               # Skip episodes older than this (based on published date)
+  max_audio_length_minutes: 240         # Skip episodes longer than this (checked from RSS <itunes:duration> tag)
+                                        # If duration missing from RSS, process optimistically
+                                        # Future: Could use mutagen library to check after download
+
+  # Disk space management
+  archive_retention_days: 15            # Delete archived audio files older than this
+  max_audio_file_size_mb: 500           # Skip downloading files larger than this (MB)
+  max_transcript_retention_days: 365    # Keep transcripts for 1 year
+
+  # Email configuration
+  system_email: "admin@example.com"     # Used as sender address for all emails AND recipient for error notifications
+  reply_to_email: "admin@example.com"        # Reply-to address for all outgoing emails
+
+# Default contextualize prompt (extracts metadata before transcription)
+default_contextualize_prompt: |
+  Based on the podcast and episode information provided, extract:
+
+  1. **Host**: List of all the hosts of the podcast
+  1. **Participants**: List all hosts, guests, and speakers mentioned. Include a short bio for each, whenever provided. Note: this is only for active participants, not production crew or people discussed in the podcast.
+  2. **Topics**: 3-5 main topics or themes this episode will cover
+  3. **Episode Summary**: 1-2 sentence overview of what this episode is about
+
+  Format your response as:
+  Host(s): [names]
+  Participants: [names]
+  Topics: [topic list]
+  Summary: [brief summary]
+
+# System prompt sent to LLM for all summarizations (sets context/role)
+summary_system_prompt: |
+  You have excellent command of the language and know how to convey information crisply and engagingly. Your audience is well-read, educated, silicon valley tech leaders with broad interests, able to scan emails quickly but don't have time for a full podcast. They like to understand things in depth, especially when it comes to their industry.
+
+  Your task is to summarize this podcast conversation, while capturing nuance, tone and color of the original. Your primary goal is to give the user what they have asked for. Your second goal is to have the summary capture all the interesting parts of the conversation, while being true to the original. Avoid being bland or generic. Do not repeat any parts of the user's request verbatim. Use the content to create a structure for your summary that makes for easy comprehension, and use smooth flowing prose for your summary. Start with a brief introduction of the guest(s) and other context required to understand the conversation. Include the following, without creating an explicit 'meta structure' for these:
+  - Overview of topics discussed
+  - The summary itself, with important insights, all in smoothly flowing prose
+  - Notable quotes or moments
+  - Any reading material or tools mentioned (without self-referencing)
+
+  You may use Markdown, but not LaTeX.
+
+# Default user prompt (used if podcast doesn't specify custom insights_prompt)
+summary_default_prompt: |
+  Extract the most interesting parts of this conversation, and key insights. Avoid platitudes or generalizations; let your summary reflect the engaging-ness of the discussion.

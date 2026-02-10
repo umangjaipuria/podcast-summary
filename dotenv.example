@@ -1,0 +1,5 @@
+# API Keys
+ASSEMBLYAI_API_KEY=your-assemblyai-key
+OPENAI_API_KEY=your-openai-key
+GEMINI_API_KEY=your-gemini-api-key
+RESEND_API_KEY=your-resend-key

@@ -18,7 +18,7 @@ A lightweight, automated system that monitors podcast RSS feeds, transcribes new
 
 ## System Architecture
 
-The system follows a sequential pipeline architecture with five main components:
+The system follows a sequential pipeline architecture with six main components:
 
 ```
 ┌─────────────────────────────────────┐
@@ -29,18 +29,18 @@ The system follows a sequential pipeline architecture with five main components:
     │  Main Orchestrator      │
     └────────────┬────────────┘
                  │
-    ┌────────────┼────────────┐
-    │            │            │
-┌───▼───┐  ┌─────▼─────┐  ┌───▼────┐
-│  RSS  │  │Transcribe │  │  LLM   │
-│Parser │─►│ +Diarize  │─►│Summary │
-└───┬───┘  └───────────┘  └───┬────┘
-    │                        │
-    ▼                        ▼
-┌──────────┐           ┌──────────┐
-│  SQLite  │           │  Email   │
-│ Database │           │ Service  │
-└──────────┘           └──────────┘
+    ┌────────────┼────────────┬────────────┐
+    │            │            │            │
+┌───▼───┐  ┌─────▼──────┐ ┌──▼────────┐ ┌──▼────┐
+│  RSS  │  │Contextualize│ │Transcribe │ │  LLM  │
+│Parser │─►│  Metadata  │─►│ +Diarize  │─►│Summary│
+└───┬───┘  └────────────┘ └───────────┘ └───┬───┘
+    │                                       │
+    ▼                                       ▼
+┌──────────┐                           ┌──────────┐
+│  SQLite  │                           │  Email   │
+│ Database │                           │ Service  │
+└──────────┘                           └──────────┘
 ```
 
 ---
@@ -60,24 +60,29 @@ The system follows a sequential pipeline architecture with five main components:
 **Schema:**
 
 **`podcasts` table** - Podcast registry synced from `podcasts.yaml` on each run
-- Fields: `id`, `slug` (unique), `active` (boolean), `last_checked`, `created_at`, `updated_at`
+- Fields: `id`, `slug` (unique), `active` (boolean), `metadata` (TEXT, JSON), `last_checked`, `created_at`, `updated_at`
 - Purpose: Track which podcasts are monitored and when they were last checked
 - Sync behavior: Insert new podcasts, update active flag from config, mark removed podcasts as inactive
-- `last_checked` used with `podcast_check_interval_hours` config to throttle RSS fetching
+- `last_checked` timestamp updated after each RSS fetch
+- `metadata` JSON column stores podcast-level data from RSS feed (description, author, link)
 
 **`episodes` table** - Episodes discovered from RSS feeds
-- Fields: `id`, `podcast_id` (FK), `episode_guid` (unique), `title`, `description`, `link`, `audio_url`, `image_url`, `published_date`, `generated_summary`, `raw_rss`, `created_at`, `updated_at`
+- Fields: `id`, `podcast_id` (FK), `episode_guid` (unique), `title`, `description`, `link`, `audio_url`, `image_url`, `published_date`, `duration_minutes`, `file_size_mb`, `context`, `generated_summary`, `raw_rss`, `created_at`, `updated_at`
 - Purpose: Store all episode metadata from RSS feed and generated summary
 - `episode_guid`: Unique identifier from RSS used for deduplication
 - `image_url`: Episode artwork/thumbnail from RSS feed (used in summary emails)
+- `duration_minutes`: Episode duration in minutes from RSS `<itunes:duration>` tag
+- `file_size_mb`: Audio file size in MB (from RSS enclosure `length` attribute or actual download)
+- `context`: LLM-generated context from episode metadata (populated before transcription)
 - `generated_summary`: LLM-generated summary text (populated after summarization step)
 - `raw_rss`: Full XML blob of episode entry for debugging and audit trail
 - `link`: Episode URL from RSS feed (included in summary emails)
 
 **`processing_log` table** - Processing pipeline state tracking
-- Fields: `id`, `episode_id` (FK), `status`, `transcript_path`, `summary_path`, `started_at`, `completed_at`, `error_message`, `created_at`, `updated_at`
-- `status` values: 'downloaded', 'transcribed', 'summarized', 'emailed', 'completed', 'failed'
+- Fields: `id`, `episode_id` (FK), `status`, `audio_path`, `transcript_path`, `summary_path`, `started_at`, `completed_at`, `error_message`, `created_at`, `updated_at`
+- `status` values: 'downloaded', 'contextualized', 'transcribed', 'summarized', 'emailed', 'completed', 'failed'
 - Status represents last successful checkpoint
+- `audio_path`: File path to audio file (used for archiving/cleanup)
 - `transcript_path`: File path to raw transcript (.raw.txt)
 - `summary_path`: File path to generated summary (.summary.txt)
 - `error_message`: Populated if status='failed', contains error details
@@ -98,7 +103,13 @@ The system follows a sequential pipeline architecture with five main components:
 - Cost effective at ~$0.27/hour
 - Reliable speaker labeling for podcasts with multiple hosts/guests
 - Official Python SDK available
-- Asynchronous API (polling/webhook) - implementation will handle wait and retry logic internally
+- SDK handles async polling internally (simplified implementation - no manual polling needed)
+- Built-in polling with configurable intervals (default: 5 seconds)
+
+**Implementation:**
+- Uses `transcriber.transcribe()` method which handles upload, submission, and polling automatically
+- No manual timeout or polling logic needed - SDK manages this
+- Returns completed transcript or error status
 
 **Future Considerations:**
 - ElevenLabs - reportedly better accuracy (evaluate later)
@@ -123,7 +134,9 @@ The system follows a sequential pipeline architecture with five main components:
 
 **Email Format:**
 - Subject: `SUMMARY: {Podcast Name}: {episode title}`
-- Body: Episode image + title as header, link to original podcast underneath, followed by LLM-generated summary 
+- Body: Episode image (250px max width) + title as header, link to original podcast underneath, followed by LLM-generated summary
+- Summary is rendered as HTML using markdown2 library (supports lists, code blocks, tables)
+- Dependencies: `markdown2>=2.4.0` (added to pyproject.toml) 
 
 ---
 
@@ -143,6 +156,8 @@ The system follows a sequential pipeline architecture with five main components:
 - **openai** - OpenAI API SDK for GPT models
 - **google-genai** - Google Gemini API SDK
 - **resend** - Official Resend SDK for email delivery
+- **markdown2** - Convert markdown to HTML for email formatting
+- **click** - Command-line interface framework for run_pipeline.py
 
 ---
 
@@ -156,20 +171,22 @@ podcast-monitor/
 ├── podcasts.yaml            # Podcast subscriptions (includes commented template)
 ├── config.yaml              # Application settings (includes commented template)
 ├── pyproject.toml           # Python dependencies (uv format)
-├── main.py                  # Orchestrator
+├── main.py                  # Main orchestrator
+├── run_pipeline.py          # CLI tool for running individual pipeline stages
 ├── src/
 │   ├── __init__.py
 │   ├── config_loader.py     # Load and validate YAML configs and environment variables
 │   ├── rss_parser.py        # Fetch & parse RSS feeds
 │   ├── database.py          # SQLite operations
 │   ├── downloader.py        # Download audio files
-│   ├── transcriber.py       # Transcription + diarization (handles async polling)
+│   ├── contextualizer.py    # Extract context from episode metadata (pre-transcription)
+│   ├── transcriber.py       # Transcription + diarization (SDK handles async polling)
 │   ├── summarizer.py        # LLM orchestrator (uses provider-specific modules)
 │   ├── llm/
 │   │   ├── __init__.py
 │   │   ├── openai.py        # OpenAI GPT provider
 │   │   └── gemini.py        # Google Gemini provider
-│   └── emailer.py           # Send emails via Resend
+│   └── emailer.py           # Send emails via Resend (markdown to HTML conversion)
 ├── deployment/
 │   ├── podcast-monitor.service  # Systemd service unit file
 │   └── podcast-monitor.timer    # Systemd timer unit file
@@ -236,7 +253,6 @@ Application settings with inline documentation:
 ```yaml
 settings:
   check_last_n_episodes: 3              # Number of recent episodes to check per feed
-  podcast_check_interval_hours: 24      # Skip podcast if checked within this window
   max_audio_length_minutes: 240         # Skip episodes longer than this (checked from RSS <itunes:duration> tag)
                                         # If duration missing from RSS, process optimistically
                                         # Future: Could use mutagen library to check after download
@@ -258,6 +274,16 @@ default_insights_prompt: |
   - Actionable recommendations (if applicable)
 
   Keep the summary focused and under 300 words.
+
+# Default contextualization prompt (used for metadata-based context extraction)
+default_contextualize_prompt: |
+  Based on the provided podcast and episode metadata, extract useful context that will help with later transcription and summarization.
+  Include information about:
+  - Who are the likely participants/speakers
+  - What topics are likely to be discussed
+  - Any relevant background information
+
+  Keep the context concise and factual.
 ```
 
 ### .env
@@ -266,13 +292,10 @@ Environment variables for API keys and secrets:
 
 ```bash
 # API Keys
-ASSEMBLYAI_API_KEY=your-assemblyai-key
-OPENAI_API_KEY=your-openai-key
-GOOGLE_API_KEY=your-google-api-key
-RESEND_API_KEY=your-resend-key
-
-# Email Configuration
-FROM_EMAIL=podcasts@yourdomain.com
+ASSEMBLYAI_API_KEY=<YOUR_ASSEMBLYAI_API_KEY>
+OPENAI_API_KEY=<YOUR_OPENAI_API_KEY>
+GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>
+RESEND_API_KEY=<YOUR_RESEND_API_KEY>
 ```
 
 ---
@@ -287,35 +310,44 @@ The system executes the following sequence daily:
    - Validate `config.yaml` (default prompt, settings, system_email)
    - Validate environment variables (API keys present and non-empty)
    - Exit with code 1 if any validation fails
-2. **Sync podcasts table** from `podcasts.yaml`:
-   - Insert new podcasts (new slugs)
-   - Update existing podcasts: set active flag from config
-   - Mark podcasts not in config as active=false (removed podcasts)
+2. **Initialize database and sync podcasts** (via `db.setup_and_sync()`):
+   - Connect to database
+   - Initialize schema (create tables if not exists)
+   - Sync podcasts from `podcasts.yaml`:
+     - Try to update existing podcasts first (by slug): set active flag from config
+     - If no rows updated (podcast doesn't exist), insert new podcast
+     - Mark podcasts not in config as active=false (removed podcasts)
+   - Note: Uses UPDATE first, then INSERT pattern (not UPSERT) for better compatibility
 3. For each podcast in database where active=true:
-   - **Check last_checked**: Skip if `(now - last_checked) < podcast_check_interval_hours`
    - Fetch RSS feed and parse last N episodes (from `check_last_n_episodes` config)
    - Update `last_checked` timestamp
 4. For each episode from RSS:
    - Check if `episode_guid` exists in episodes table
    - Parse duration from RSS feed (`<itunes:duration>` tag, format: HH:MM:SS or seconds)
+   - Parse file size from RSS enclosure `length` attribute (if present)
    - If duration > max_audio_length_minutes: Skip episode (log warning)
    - If duration missing from RSS: Process optimistically (don't skip)
-   - If new: Insert into episodes table with full metadata (title, description, link, audio_url, image_url, raw_rss)
+   - If new: Insert into episodes table with full metadata (title, description, link, audio_url, image_url, duration_minutes, file_size_mb, raw_rss)
 5. For each episode that needs processing:
    - **Include episodes where:** not in processing_log (new episodes only)
    - **Note:** Failed episodes (status='failed') are NOT retried - they remain marked as failed
    - Download audio file to `audio/downloaded/`
-   - Update processing_log: status='downloaded' (or insert new row if not exists)
+   - Update episodes table with actual file size from download (more accurate than RSS)
+   - Update processing_log: status='downloaded', audio_path='{path}' (or insert new row if not exists)
+   - Extract context from episode metadata using LLM (Gemini 2.5 Flash with automatic thinking)
+   - Context includes: podcast name, episode title, description, published date, episode link, podcast description, author
+   - Save context to episodes.context column
+   - Update processing_log: status='contextualized'
    - Move to `audio/processing/` during transcription
-   - Send to AssemblyAI API with diarization enabled
-   - Poll for transcription completion (handled internally by transcriber)
+   - Send to AssemblyAI API with diarization enabled (SDK handles upload and polling automatically)
    - Save transcript with speaker labels to `transcripts/{podcast-slug}/yyyymmdd-episode-name.raw.txt`
    - Update processing_log: status='transcribed', transcript_path='{path}'
-   - Send transcript to LLM for summarization using podcast-specific prompt (or default)
+   - Send transcript + context to LLM for summarization using podcast-specific prompt (or default)
    - Save summary to `transcripts/{podcast-slug}/yyyymmdd-episode-name.summary.txt`
    - Update episodes table: set generated_summary column with generated text
    - Update processing_log: status='summarized', summary_path='{path}'
    - Format email with summary (from episodes.generated_summary column or .summary.txt file) + link to episode (from episodes.link field)
+   - Convert markdown summary to HTML using markdown2 library
    - Send email via Resend to all recipients in podcast config
    - For each successful delivery: Insert row into email_log (episode_id, recipient_email, sent_at)
    - Update processing_log: status='emailed'
@@ -396,12 +428,81 @@ WantedBy=timers.target
 **Healthchecks.io Integration:**
 - Pre-execution hook (`ExecStartPre`) pings healthchecks.io when job starts
 - Post-execution hook (`ExecStopPost`) reports success/failure based on exit code
-- Replace `YOUR-UUID` with actual healthchecks.io check UUID
+- Replace `<YOUR_HEALTHCHECKS_UUID>` with actual healthchecks.io check UUID
 
 **Logging:** All output (stdout/stderr) is captured by systemd journal. View logs with:
 ```bash
 journalctl -u podcast-monitor.service -f  # Follow logs
 journalctl -u podcast-monitor.service --since today  # Today's logs
+```
+
+---
+
+## CLI Tool for Pipeline Management
+
+The `run_pipeline.py` script provides a command-line interface for running individual pipeline stages manually. This is useful for testing, debugging, and manual episode processing.
+
+### Available Commands
+
+**1. `fetch`** - Fetch and optionally download latest episodes from RSS feed
+- Options: `--podcast` (slug), `--limit` (number of episodes), `--download/--no-download`
+- Example: `uv run python run_pipeline.py fetch --podcast tech-podcast --limit 1`
+
+**2. `contextualize`** - Extract context from episode metadata
+- Options: `--episode-id` (required)
+- Example: `uv run python run_pipeline.py contextualize --episode-id 123`
+- Marks episode as 'failed' if contextualization fails
+
+**3. `transcribe`** - Transcribe a specific episode or audio file
+- Options: `--episode-id` OR `--audio-path` + `--podcast`
+- Example: `uv run python run_pipeline.py transcribe --episode-id 123`
+- Marks episode as 'failed' if transcription fails
+
+**4. `summarize`** - Generate summary from transcript
+- Options: `--episode-id` OR `--transcript-path` + `--podcast`, `--prompt` (optional custom prompt)
+- Example: `uv run python run_pipeline.py summarize --episode-id 123`
+- Marks episode as 'failed' if summarization fails
+
+**5. `email`** - Send summary email or generate HTML preview
+- Options: `--episode-id` (required), `--recipients` (optional), `--output` (write HTML to file)
+- Example: `uv run python run_pipeline.py email --episode-id 123 --output preview.html`
+- Preview mode allows testing email formatting without sending
+
+**6. `complete`** - Mark episode as completed and archive audio
+- Options: `--episode-id` (required)
+- Example: `uv run python run_pipeline.py complete --episode-id 123`
+- Useful after manually running individual stages
+
+**7. `process`** - Run complete pipeline or specific stages
+- Options: `--episode-id` (required), `--stages` (comma-separated), `--skip-email`
+- Example: `uv run python run_pipeline.py process --episode-id 123 --stages contextualize,transcribe,summarize`
+
+### CLI Implementation Details
+
+- Built with Click framework (`click>=8.0.0` dependency)
+- Shares same components as main.py (Database, Transcriber, Summarizer, Emailer)
+- Uses `setup_and_sync()` method for database initialization (same as main.py)
+- Error handling: Failed operations mark episode as 'failed' in processing_log
+- All output uses Click's echo functions for consistent formatting
+- Cleanup handled via context manager pattern
+
+### Common Workflows
+
+**Manual step-by-step processing:**
+```bash
+uv run python run_pipeline.py fetch --podcast tech-podcast --limit 1
+uv run python run_pipeline.py contextualize --episode-id 42
+uv run python run_pipeline.py transcribe --episode-id 42
+uv run python run_pipeline.py summarize --episode-id 42
+uv run python run_pipeline.py email --episode-id 42 --output preview.html
+uv run python run_pipeline.py email --episode-id 42
+uv run python run_pipeline.py complete --episode-id 42
+```
+
+**Using process command:**
+```bash
+uv run python run_pipeline.py process --episode-id 42  # All stages
+uv run python run_pipeline.py process --episode-id 42 --stages contextualize,transcribe,summarize
 ```
 
 ---
@@ -473,9 +574,11 @@ On startup, the system performs comprehensive validation via `config_loader.py`:
 **Environment variable validation:**
 - `ASSEMBLYAI_API_KEY` is present and non-empty
 - `RESEND_API_KEY` is present and non-empty
-- `FROM_EMAIL` is present and valid email format
-- LLM API key for the implemented provider (e.g., `OPENAI_API_KEY` or `GOOGLE_API_KEY` depending on code)
+- LLM API key for the implemented provider (e.g., `OPENAI_API_KEY` or `GEMINI_API_KEY` depending on code)
 - If validation fails, exit with error code 1
+
+**Config file validation:**
+- `system_email` is present in `config.yaml` and valid email format
 
 **Exit codes:**
 - `0`: Success
@@ -493,21 +596,45 @@ The system uses a provider abstraction layer to support multiple LLM services:
 - Raises exception if API call fails after retries
 
 **Provider implementations:**
-- `src/llm/openai.py` - Uses OpenAI GPT models (default: gpt-4o-mini)
-- `src/llm/gemini.py` - Uses Google Gemini models (default: gemini-1.5-flash)
+- `src/llm/openai.py` - Supports OpenAI GPT models (standard and reasoning/o-series)
+  - Standard models: Accept `temperature` parameter
+  - Reasoning models: Accept `reasoning_effort` parameter (low/medium/high)
+- `src/llm/gemini.py` - Supports Google Gemini models (2.5 and 3.x series)
+  - Gemini 3.x: Accept `thinking_level` parameter (low/high)
+  - Gemini 2.5: Accept `thinking_budget` parameter (integer token count)
+  - Both versions: Accept `temperature` parameter
 
-**How summarizer.py uses providers:**
-1. Provider selection is **code-level** (hardcoded import in summarizer.py)
-2. Import the chosen provider module
-3. Call provider's summarize function with transcript and prompt
-4. Handle retries and errors uniformly
-5. **Note:** Switching providers requires code change, not config change
+**How summarizer.py and contextualizer.py use providers:**
+1. Provider selection is **code-level** (import statement)
+   - summarizer.py line 8: `from src.llm import gemini as llm_provider`
+   - contextualizer.py line 8: `from src.llm import gemini as llm_provider`
+2. Both components explicitly set all parameters (model, temperature, thinking params)
+3. No defaults in provider implementations - each component controls everything
+4. To switch providers: Change import and update component's __init__() configuration
+
+**Current configuration (Summarizer.__init__):**
+- Model: `gemini-3-pro-preview` (Gemini 3 Pro experimental/preview model)
+- Temperature: `1.0`
+- Thinking: `thinking_level="high"` (for deeper reasoning)
+- To use Gemini 2.5: Set `model="gemini-2.5-flash"`, `thinking_budget=1024`, `thinking_level=None`
+
+**Current configuration (Contextualizer.__init__):**
+- Model: `gemini-2.5-flash` (fast, cheap model for metadata extraction)
+- Temperature: `0.7`
+- Thinking: `thinking_budget=-1` (automatic/dynamic thinking mode)
+- Rationale: Contextualizer runs before transcription and needs to be fast and cost-effective
 
 **Provider implementation details:**
-- Each provider module creates API client using environment variable for API key
-- Calls respective API with configured model
-- Passes system prompt and transcript to model
+- Each provider reads API key from environment variable (OPENAI_API_KEY or GEMINI_API_KEY)
+- Accepts model and optional parameters (temperature, thinking_level, thinking_budget, reasoning_effort)
 - Returns generated summary text
+- Raises exception on API failure
+
+**Gemini provider specifics:**
+- Uses `google.genai.types` module for configuration classes
+- Converts string `thinking_level` to enum (`types.ThinkingLevel.HIGH` or `types.ThinkingLevel.LOW`)
+- Properly constructs `types.ThinkingConfig` and `types.GenerateContentConfig` objects
+- Temperature and thinking params are optional - only included if set
 
 ### Error Handling Strategy
 
@@ -664,12 +791,7 @@ The system uses a focused set of integration and end-to-end tests to verify core
 - Verify next episode still processes (failure isolation)
 - Verify failed episode is NOT retried on subsequent runs
 
-**9. Podcast Check Interval Throttling**
-- Process podcast (last_checked timestamp set)
-- Run again within interval → podcast skipped
-- Run after interval expires → podcast processed
-
-**Total: 9 focused tests**
+**Total: 8 focused tests**
 
 These tests cover the critical paths while avoiding unnecessary complexity around API failures, file system operations, and other implementation details that are either simple or externally managed.
 

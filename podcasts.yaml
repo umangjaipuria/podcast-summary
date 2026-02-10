@@ -1,0 +1,8 @@
+# Template for adding new podcasts:
+# - name: "Podcast Name"                         # REQUIRED: display name for podcast
+#   slug: "podcast-slug"                          # REQUIRED: unique identifier (used for file paths)
+#   rss_url: "https://example.com/feed.xml"       # REQUIRED: RSS feed URL
+#   active: true                                  # REQUIRED: false = orchestrator skips this podcast
+#   emails:                                       # OPTIONAL: no emails = orchestrator skips processing this podcast
+#     - "you@example.com"
+#   insights_prompt: "Custom prompt for this podcast"  # OPTIONAL: uses default if not specified

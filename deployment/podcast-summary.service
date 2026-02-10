@@ -1,0 +1,28 @@
+[Unit]
+Description=Podcast Summary - email summaries of new podcast episodes
+After=network-online.target
+Wants=network-online.target
+
+
+[Service]
+Type=oneshot
+User=<USER>
+Group=<USER>
+WorkingDirectory=/home/<USER>/podcast-summary
+Environment="PATH=/home/<USER>/podcast-summary/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="HEALTHCHECKS_UUID=<YOUR HEALTHCHECKS.IO UUID>"
+
+# Timeout: Kill job if it runs longer than 6 hours
+TimeoutStartSec=6h
+
+# Healthchecks.io: Signal start
+ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null https://hc-ping.com/${HEALTHCHECKS_UUID}/start
+# Run service via uv
+ExecStart=/home/linuxbrew/.linuxbrew/bin/uv run main.py
+# Healthchecks.io: Signal completion (0=success, non-zero=failure)
+ExecStopPost=/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null https://hc-ping.com/${HEALTHCHECKS_UUID}/${EXIT_STATUS}
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=podcast-summary

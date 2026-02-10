@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Podcast Summary daily at 5 AM Pacific
+
+[Timer]
+# Run daily at 5 AM Pacific Time (handles DST automatically)
+OnCalendar=*-*-* 05:30:00 America/Los_Angeles
+Persistent=true
+
+[Install]
+WantedBy=timers.target
