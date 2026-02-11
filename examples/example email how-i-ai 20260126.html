@@ -1,0 +1,92 @@
+<html>
+<body>
+<div style="font-family:Arial,sans-serif">
+  <img src="https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_episode/43412682/43412682-1769036452302-3393a03c682db.jpg" alt="Episode artwork" style="max-width:250px;margin-bottom:20px">
+  <br>
+  <h2 style="margin-bottom:8px">Advanced Claude Code techniques: context loading, mermaid diagrams, stop hooks, and more | John Lindquist</h2>
+  <div style="font-size:0.85em;color:#666;margin-bottom:16px">
+    <a href="https://creators.spotify.com/pod/profile/pen-name/" style="color:#666;text-decoration:none" target="_blank">How I AI</a> • Jan 26, 2026 12:00 PM
+  </div>
+  <p><a href="https://creators.spotify.com/pod/profile/pen-name/episodes/Advanced-Claude-Code-techniques-context-loading--mermaid-diagrams--stop-hooks--and-more--John-Lindquist-e3dtf0n" target="_blank">Listen to episode</a> (57 min)</p>
+  <hr>
+  <div style="margin-top:20px">
+    <p>Here is a summary of the conversation between Claire Vo and John Lindquist on advanced AI engineering workflows.</p>
+
+    <h3><strong>The Context</strong></h3>
+
+    <p>Host Claire Vo sits down with John Lindquist, co-founder of <a href="http://egghead.io" target="_blank">egghead.io</a> and a developer education veteran. While previous episodes have focused on "vibe coding" or entry-level use cases, this discussion targets senior engineers, staff engineers, and CTOs. The focus is on leverage: moving beyond simple chat interfaces to architecting robust, automated workflows using tools like Claude Code, Cursor, and custom CLI scripting to achieve "10x" engineering outcomes.</p>
+
+    <h3><strong>Topics Covered</strong></h3>
+
+    <ul>
+      <li><strong>Context Compression:</strong> Using Mermaid diagrams and Markdown to preload application logic into LLMs.</li>
+      <li><strong>Claude Code Hooks:</strong> creating "stop hooks" to automate quality control (linting, type checking) and git commits.</li>
+      <li><strong>CLI Tooling:</strong> Building constrained command-line interfaces for rapid prototyping.</li>
+      <li><strong>Legacy Code Archeology:</strong> Using AI to generate documentation and orient developers within complex codebases.</li>
+      <li><strong>Drift Mitigation:</strong> Strategies for resetting context when an LLM hallucination loop begins.</li>
+    </ul>
+
+    <h3><strong>Deep Dive: Practical Workflows &amp; Techniques</strong></h3>
+
+    <p><strong>Preloading "Mental Models" via Mermaid Diagrams</strong>
+    Lindquist argues that while most developers use RAG or file searches for context, these methods often miss the architectural relationships between files. His solution is maintaining a <code>memory/</code> directory containing Markdown files populated with Mermaid diagrams.</p>
+
+    <ul>
+      <li><strong>The Workflow:</strong> Instead of asking the AI to read raw code files to understand an authentication flow, Lindquist preloads a visual representation of the logic (database ops, user states) using the <code>--append-system-prompt</code> flag in Claude Code.</li>
+      <li><strong>The Benefit:</strong> This compresses the token load while providing the LLM with a high-level map of the system. It eliminates the "discovery" phase where the model blindly reads files to figure out how component A touches component B.</li>
+      <li><strong>Execution:</strong> He aliases this workflow in his terminal (e.g., typing <code>cdi</code> to launch Claude with the diagram context pre-injected), effectively giving the model "long-term memory" of the system architecture from the first prompt.</li>
+    </ul>
+
+    <p><strong>The "Stop Hook" Quality Loop</strong>
+    The most technical segment of the discussion centers on Claude Code's <code>stop_hook</code> functionality. Lindquist demonstrates how to prevent the common frustration of AI generating code that looks correct but fails to compile.</p>
+
+    <ul>
+      <li><strong>The Technique:</strong> He configures a custom hook that triggers immediately after the AI finishes generating code but <em>before</em> it returns control to the user.</li>
+      <li><strong>The Logic:</strong>
+        <ol>
+          <li><strong>Check:</strong> Did files change?</li>
+          <li><strong>Verify:</strong> Run a script (e.g., <code>bun typecheck</code> or a linter).</li>
+          <li><strong>Feedback Loop:</strong> If errors exist, the script captures the <code>console.log</code> output and feeds it back to Claude as a new prompt instruction (e.g., "Fix these TypeScript errors").</li>
+          <li><strong>Commit:</strong> If the check passes, the hook instructs Claude to automatically git commit the changes with a descriptive message.</li>
+        </ol>
+      </li>
+      <li><strong>Why it matters:</strong> This turns the AI from a code generator into a code <em>completer</em>, ensuring that human intervention is only required for logic review, not syntax cleanup.</li>
+    </ul>
+
+    <p><strong>Constrained Interfaces for Ideation</strong>
+    Lindquist showcases a workflow where he wraps Gemini models in custom CLI tools for rapid prototyping. In his example—generating a Christmas decoration store design—he uses a terminal interface to select parameters (theme, color palette) and lets the script handle the prompting.</p>
+
+    <ul>
+      <li><strong>The Insight:</strong> Vo notes that the terminal's "constrained UI" is a feature, not a bug. By removing the visual distractions of a browser or a complex IDE, the developer focuses purely on the inputs and outputs, allowing for faster iteration cycles ("edit rather than author").</li>
+    </ul>
+
+    <p><strong>The "Infinite Junior Talent" Mental Model</strong>
+    The conversation reframes AI not as a replacement for senior thought, but as "infinite junior to mid-level talent." Lindquist suggests delegating the "drudgery" that senior engineers often skip due to time constraints:</p>
+
+    <ul>
+      <li><strong>Archeology:</strong> Asking the AI to trace the git history of a file to explain <em>why</em> a function was written a certain way.</li>
+      <li><strong>Documentation:</strong> Generating distinct documentation for different audiences (technical specs for engineers vs. support docs for customers) from the same codebase.</li>
+      <li><strong>Mediation:</strong> When an LLM conversation goes "off the rails" and the model refuses to abandon a bad path, Lindquist recommends exporting the chat transcript and feeding it to a reasoning model (like Gemini Deep Think or ChatGPT Pro) with the prompt: "Critique this conversation and tell me where we miscommunicated." He treats the second model as a mediator to resolve the conflict before restarting the session.</li>
+    </ul>
+
+    <h3><strong>Notable Quotes</strong></h3>
+
+    <ul>
+      <li><strong>On Context:</strong> "This is the era of the file type... We are having more episodes where people are discovering specific file types [like Mermaid or JSON] that have a specific context structure that are really useful for a use case." — <em>Claire Vo</em></li>
+      <li><strong>On Workflow:</strong> "If I gave you infinite junior to mid-career talent who is always available... what would you do when a ticket came in? You'd say, 'Go trace who wrote the code, figure out the history, make a tech spec, call out the risks.' All of that can just become a prompt." — <em>Claire Vo</em></li>
+      <li><strong>On Iterate vs. Create:</strong> "A sheet of paper full of things that are wrong is much better than nothing. Because even if it's wrong, you recognize it's wrong and it helps you think of what's right." — <em>John Lindquist</em></li>
+    </ul>
+
+    <h3><strong>Tools &amp; References Mentioned</strong></h3>
+
+    <ul>
+      <li><strong>Claude Code:</strong> Specifically the <code>--append-system-prompt</code> flag and <code>stop_hooks</code> configuration.</li>
+      <li><strong>Mermaid.js:</strong> For generating diagrammatic context within Markdown.</li>
+      <li><strong>Bun:</strong> Used as a fast runtime for the TypeScript check scripts in the hook examples.</li>
+      <li><strong>Cursor:</strong> Specifically the integration of "Agent" mode for autonomous coding.</li>
+      <li><strong>Gemini (Deep Think):</strong> Used as the "mediator" model to analyze failed prompt chains.</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>
